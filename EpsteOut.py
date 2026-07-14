@@ -16,6 +16,7 @@ from datetime import datetime
 import html
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -70,6 +71,11 @@ def get_api_key():
     return api_key
 
 
+def strip_emojis(text):
+    """Remove symbols that make a person's name unsuitable for exact search."""
+    return re.sub(r"[^\w\s\-'.,]", "", text, flags=re.UNICODE).strip()
+
+
 def parse_linkedin_contacts(csv_path):
     """
     Parse LinkedIn connections CSV export.
@@ -94,8 +100,8 @@ def parse_linkedin_contacts(csv_path):
         reader = csv.DictReader(remaining_content.splitlines())
 
         for row in reader:
-            first_name = row.get('First Name', '').strip()
-            last_name = row.get('Last Name', '').strip()
+            first_name = strip_emojis(row.get('First Name', '').strip())
+            last_name = strip_emojis(row.get('Last Name', '').strip())
 
             # Remove credentials/certifications (everything after the first comma)
             if ',' in last_name:
@@ -136,6 +142,10 @@ def search_epstein_files(name, delay, api_key):
                     delay = int(retry_after)
                 else:
                     delay *= 2
+
+                if delay > 300:
+                    print(f" [daily API limit reached, retry in {delay}s]", flush=True)
+                    return {'total_hits': 0, 'hits': [], 'daily_limit': True}, delay
 
                 print(f" [429 rate limited, retrying in {delay}s]", end='', flush=True)
                 time.sleep(delay)
@@ -350,6 +360,10 @@ def generate_html_report(results, output_path):
 
 
 def main():
+    if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
     if not HAS_REQUESTS:
         print("Error: 'requests' library is required. Install with: pip install requests", file=sys.stderr)
         sys.exit(1)
@@ -439,6 +453,10 @@ To export your LinkedIn connections:
 
             search_result, delay = search_epstein_files(contact['full_name'], delay, api_key)
             total_mentions = search_result['total_hits']
+
+            if search_result.get('daily_limit'):
+                print("\nDaily API limit reached. Generating a partial report from cached results.")
+                break
 
             print(f" -> {total_mentions} hits")
 
